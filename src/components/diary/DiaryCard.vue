@@ -169,6 +169,13 @@ function closeDeleteConfirm(e: Event) {
       </div>
       
       <div 
+        v-if="diary.collaboration.isCollaborative"
+        class="absolute top-2 left-2 bg-purple-500/80 text-white px-2 py-1 rounded text-xs font-vt323"
+      >
+        👥 {{ diary.collaboration.collaborators.length + 1 }}人协作
+      </div>
+      
+      <div 
         v-if="diary.state === 'dead'"
         class="absolute inset-0 flex items-center justify-center bg-black/50"
       >

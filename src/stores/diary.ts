@@ -3,11 +3,13 @@ import { ref, computed } from 'vue'
 import type { 
   Diary, DiaryState, PipelineStep, ArchivedDiary, ArchiveReason, 
   RepairRecord, User, GalleryHall, GallerySection, GalleryCategory,
-  Exhibit, DiarySchedule
+  Exhibit, DiarySchedule, CollaborationInvitation, CollaborationStatus,
+  Collaborator, CollaborationEditRecord, DiaryCollaboration, EditType
 } from '@/types'
 import { 
   DiaryState as DS, ArchiveReason as AR, 
-  GalleryCategory as GC, TIME_PERIOD_NAMES, TimePeriod 
+  GalleryCategory as GC, TIME_PERIOD_NAMES, TimePeriod,
+  CollaborationStatus as CS, EditType as ET
 } from '@/types'
 import { storage } from '@/utils/storage'
 import { generateId } from '@/utils/id'
@@ -29,6 +31,7 @@ export const useDiaryStore = defineStore('diary', () => {
   const diaries = ref<Diary[]>([])
   const archivedDiaries = ref<ArchivedDiary[]>([])
   const stateMachines = ref<Map<string, StateMachine>>(new Map())
+  const collaborationInvitations = ref<CollaborationInvitation[]>([])
 
   const currentUserDiaries = computed(() => {
     const userStore = getUserStore()
@@ -42,13 +45,87 @@ export const useDiaryStore = defineStore('diary', () => {
     return archivedDiaries.value.filter(ad => ad.diary.ownerId === userId)
   })
 
+  const collaborativeDiaries = computed(() => {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return []
+    return diaries.value.filter(d => 
+      d.collaboration.isCollaborative && 
+      d.collaboration.collaborators.some(c => c.userId === userId)
+    )
+  })
+
+  const pendingInvitations = computed(() => {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return []
+    const now = globalTimeline.getTime()
+    return collaborationInvitations.value.filter(inv => 
+      inv.inviteeId === userId && 
+      inv.status === CS.PENDING &&
+      inv.expiresAt > now
+    )
+  })
+
+  const sentInvitations = computed(() => {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return []
+    return collaborationInvitations.value.filter(inv => inv.inviterId === userId)
+  })
+
+  const allInvitations = computed(() => {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return []
+    return collaborationInvitations.value.filter(inv => 
+      inv.inviterId === userId || inv.inviteeId === userId
+    )
+  })
+
+  function createDefaultCollaboration(): DiaryCollaboration {
+    return {
+      isCollaborative: false,
+      collaborators: [],
+      invitations: [],
+      editHistory: [],
+      lastEditAt: null,
+      lastEditorId: null
+    }
+  }
+
   function init() {
     diaries.value = storage.getDiaries()
     archivedDiaries.value = storage.getArchivedDiaries()
+    collaborationInvitations.value = storage.getCollaborationInvitations()
+    
+    diaries.value = diaries.value.map(d => ({
+      ...d,
+      collaboration: d.collaboration || createDefaultCollaboration()
+    }))
     
     const userStore = getUserStore()
     if (userStore.currentUserId && diaries.value.length === 0 && archivedDiaries.value.length === 0) {
       setTimeout(() => createSampleDiaries(), 100)
+    }
+    
+    checkAndExpireInvitations()
+  }
+
+  function checkAndExpireInvitations() {
+    const now = globalTimeline.getTime()
+    let changed = false
+    
+    collaborationInvitations.value = collaborationInvitations.value.map(inv => {
+      if (inv.status === CS.PENDING && inv.expiresAt <= now) {
+        changed = true
+        return { ...inv, status: CS.EXPIRED }
+      }
+      return inv
+    })
+    
+    if (changed) {
+      storage.saveCollaborationInvitations(collaborationInvitations.value)
     }
   }
 
@@ -292,7 +369,8 @@ export const useDiaryStore = defineStore('diary', () => {
             decayStartAt: null,
             autoArchiveAt: null
           },
-          decayStartTime: null
+          decayStartTime: null,
+          collaboration: createDefaultCollaboration()
         }
         
         diaries.value.push(diary)
@@ -342,7 +420,8 @@ export const useDiaryStore = defineStore('diary', () => {
       pipeline,
       isPublic: true,
       schedule: fullSchedule,
-      decayStartTime: fullSchedule.decayStartAt
+      decayStartTime: fullSchedule.decayStartAt,
+      collaboration: createDefaultCollaboration()
     }
     
     diaries.value.push(diary)
@@ -732,12 +811,268 @@ export const useDiaryStore = defineStore('diary', () => {
     }
   }
 
+  function inviteCollaborator(
+    diaryId: string,
+    inviteeId: string,
+    message: string = '',
+    expiresIn: number = 1000
+  ): CollaborationInvitation | null {
+    const diary = getDiaryById(diaryId)
+    const userStore = getUserStore()
+    const inviterId = userStore.currentUserId
+    
+    if (!diary || !inviterId) return null
+    if (diary.ownerId !== inviterId) return null
+    
+    const inviter = userStore.getUserById(inviterId)
+    const invitee = userStore.getUserById(inviteeId)
+    if (!inviter || !invitee) return null
+    
+    if (diary.collaboration.collaborators.some(c => c.userId === inviteeId)) {
+      return null
+    }
+    
+    const existingPending = collaborationInvitations.value.find(inv => 
+      inv.diaryId === diaryId && 
+      inv.inviteeId === inviteeId && 
+      inv.status === CS.PENDING
+    )
+    if (existingPending) return null
+    
+    const now = globalTimeline.getTime()
+    const invitation: CollaborationInvitation = {
+      id: generateId(),
+      diaryId,
+      diaryTitle: diary.title,
+      inviterId,
+      inviterName: inviter.name,
+      inviteeId,
+      inviteeName: invitee.name,
+      status: CS.PENDING,
+      message,
+      createdAt: now,
+      expiresAt: now + expiresIn,
+      respondedAt: null
+    }
+    
+    collaborationInvitations.value.push(invitation)
+    storage.saveCollaborationInvitations(collaborationInvitations.value)
+    
+    return invitation
+  }
+
+  function acceptInvitation(invitationId: string): boolean {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return false
+    
+    const invitationIndex = collaborationInvitations.value.findIndex(
+      inv => inv.id === invitationId && inv.inviteeId === userId && inv.status === CS.PENDING
+    )
+    if (invitationIndex === -1) return false
+    
+    const invitation = collaborationInvitations.value[invitationIndex]
+    const diary = getDiaryById(invitation.diaryId)
+    if (!diary) return false
+    
+    const now = globalTimeline.getTime()
+    collaborationInvitations.value[invitationIndex] = {
+      ...invitation,
+      status: CS.ACCEPTED,
+      respondedAt: now
+    }
+    
+    const newCollaborator: Collaborator = {
+      userId,
+      userName: userStore.getUserById(userId)?.name || '未知用户',
+      joinedAt: now,
+      canEdit: true,
+      editCount: 0
+    }
+    
+    const updatedDiary: Diary = {
+      ...diary,
+      collaboration: {
+        ...diary.collaboration,
+        isCollaborative: true,
+        collaborators: [...diary.collaboration.collaborators, newCollaborator]
+      }
+    }
+    
+    updateDiary(diary.id, updatedDiary)
+    storage.saveCollaborationInvitations(collaborationInvitations.value)
+    
+    return true
+  }
+
+  function declineInvitation(invitationId: string): boolean {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return false
+    
+    const invitationIndex = collaborationInvitations.value.findIndex(
+      inv => inv.id === invitationId && inv.inviteeId === userId && inv.status === CS.PENDING
+    )
+    if (invitationIndex === -1) return false
+    
+    const now = globalTimeline.getTime()
+    collaborationInvitations.value[invitationIndex] = {
+      ...collaborationInvitations.value[invitationIndex],
+      status: CS.DECLINED,
+      respondedAt: now
+    }
+    
+    storage.saveCollaborationInvitations(collaborationInvitations.value)
+    return true
+  }
+
+  function cancelInvitation(invitationId: string): boolean {
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    if (!userId) return false
+    
+    const invitationIndex = collaborationInvitations.value.findIndex(
+      inv => inv.id === invitationId && inv.inviterId === userId && inv.status === CS.PENDING
+    )
+    if (invitationIndex === -1) return false
+    
+    collaborationInvitations.value.splice(invitationIndex, 1)
+    storage.saveCollaborationInvitations(collaborationInvitations.value)
+    return true
+  }
+
+  function removeCollaborator(diaryId: string, collaboratorId: string): boolean {
+    const diary = getDiaryById(diaryId)
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    
+    if (!diary || !userId) return false
+    if (diary.ownerId !== userId) return false
+    
+    const collaboratorIndex = diary.collaboration.collaborators.findIndex(
+      c => c.userId === collaboratorId
+    )
+    if (collaboratorIndex === -1) return false
+    
+    const newCollaborators = diary.collaboration.collaborators.filter(
+      c => c.userId !== collaboratorId
+    )
+    
+    const updatedDiary: Diary = {
+      ...diary,
+      collaboration: {
+        ...diary.collaboration,
+        collaborators: newCollaborators,
+        isCollaborative: newCollaborators.length > 0
+      }
+    }
+    
+    updateDiary(diary.id, updatedDiary)
+    return true
+  }
+
+  function updateCollaborativeContent(
+    diaryId: string,
+    newText: string,
+    editType: EditType = ET.UPDATE
+  ): boolean {
+    const diary = getDiaryById(diaryId)
+    const userStore = getUserStore()
+    const userId = userStore.currentUserId
+    
+    if (!diary || !userId) return false
+    
+    const canEdit = diary.ownerId === userId || 
+      diary.collaboration.collaborators.some(c => c.userId === userId && c.canEdit)
+    
+    if (!canEdit) return false
+    
+    const previousText = diary.content.text
+    if (previousText === newText) return false
+    
+    let diffStart = 0
+    let diffLength = newText.length
+    
+    for (let i = 0; i < Math.min(previousText.length, newText.length); i++) {
+      if (previousText[i] !== newText[i]) {
+        diffStart = i
+        break
+      }
+    }
+    
+    const now = globalTimeline.getTime()
+    const editorName = userStore.getUserById(userId)?.name || '未知用户'
+    
+    const editRecord: CollaborationEditRecord = {
+      id: generateId(),
+      diaryId,
+      editorId: userId,
+      editorName,
+      editType,
+      previousContent: previousText,
+      newContent: newText,
+      timestamp: now,
+      diffStart,
+      diffLength
+    }
+    
+    const updatedCollaborators = diary.collaboration.collaborators.map(c => {
+      if (c.userId === userId) {
+        return { ...c, editCount: c.editCount + 1 }
+      }
+      return c
+    })
+    
+    const updatedDiary: Diary = {
+      ...diary,
+      content: { ...diary.content, text: newText },
+      collaboration: {
+        ...diary.collaboration,
+        collaborators: updatedCollaborators,
+        editHistory: [...diary.collaboration.editHistory, editRecord],
+        lastEditAt: now,
+        lastEditorId: userId
+      }
+    }
+    
+    updateDiary(diary.id, updatedDiary)
+    return true
+  }
+
+  function isCollaborator(diaryId: string, userId: string): boolean {
+    const diary = getDiaryById(diaryId)
+    if (!diary) return false
+    return diary.ownerId === userId || 
+      diary.collaboration.collaborators.some(c => c.userId === userId)
+  }
+
+  function canEditDiary(diaryId: string, userId: string): boolean {
+    const diary = getDiaryById(diaryId)
+    if (!diary) return false
+    if (diary.ownerId === userId) return true
+    const collaborator = diary.collaboration.collaborators.find(c => c.userId === userId)
+    return collaborator?.canEdit || false
+  }
+
+  function getCollaborationInvitationsByDiary(diaryId: string): CollaborationInvitation[] {
+    return collaborationInvitations.value.filter(inv => inv.diaryId === diaryId)
+  }
+
+  function getInvitationById(invitationId: string): CollaborationInvitation | undefined {
+    return collaborationInvitations.value.find(inv => inv.id === invitationId)
+  }
+
   return {
     diaries,
     archivedDiaries,
+    collaborationInvitations,
     currentUserDiaries,
     currentUserArchivedDiaries,
+    collaborativeDiaries,
     publicDiaries,
+    pendingInvitations,
+    sentInvitations,
+    allInvitations,
     init,
     createDiary,
     updateDiary,
@@ -759,6 +1094,17 @@ export const useDiaryStore = defineStore('diary', () => {
     getExhibits,
     updateDiarySchedule,
     isDiaryVisibleToUser,
-    getDiaryScheduleStatus
+    getDiaryScheduleStatus,
+    inviteCollaborator,
+    acceptInvitation,
+    declineInvitation,
+    cancelInvitation,
+    removeCollaborator,
+    updateCollaborativeContent,
+    isCollaborator,
+    canEditDiary,
+    getCollaborationInvitationsByDiary,
+    getInvitationById,
+    checkAndExpireInvitations
   }
 })

@@ -7,7 +7,10 @@ import { useDiaryStore } from '@/stores/diary'
 import { pluginLoader } from '@/engine/PluginLoader'
 import { globalTimeline } from '@/engine/Timeline'
 import { STATE_ORDER, STATE_COLORS } from '@/types'
-import type { Item, DiarySchedule } from '@/types'
+import type { Item, DiarySchedule, EditType } from '@/types'
+import InviteCollaboratorModal from '@/components/diary/InviteCollaboratorModal.vue'
+import CollaborationHistory from '@/components/diary/CollaborationHistory.vue'
+import CollaborativeEditor from '@/components/diary/CollaborativeEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,10 +29,21 @@ const {
   isFrozen,
   isScheduled,
   scheduleStatus,
+  isCollaborative,
+  collaborators,
+  canEdit,
+  isCollab,
+  editHistory,
+  lastEditAt,
+  lastEditorId,
   renderToCanvas,
   toggleFreeze,
   rewindState,
-  updateSchedule
+  updateSchedule,
+  inviteCollaborator,
+  updateContent,
+  removeCollaborator,
+  cancelInvitation
 } = useDiary(diaryId.value)
 
 const { itemsByRarity, useItem } = useItems()
@@ -38,6 +52,9 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const showItemSelector = ref(false)
 const showDeleteConfirm = ref(false)
 const showScheduleEditor = ref(false)
+const showInviteModal = ref(false)
+const showHistoryModal = ref(false)
+const showEditorModal = ref(false)
 const itemTargetDiaryId = ref<string | null>(null)
 const previewTime = ref<number | null>(null)
 
@@ -207,6 +224,23 @@ function formatTime(offset: number): string {
   if (offset < 1000) return `${(offset / 100).toFixed(1)} 百单位`
   return `${(offset / 1000).toFixed(1)} 千单位`
 }
+
+function handleInviteCollaborator(inviteeId: string, message: string, expiresIn: number) {
+  return inviteCollaborator(inviteeId, message, expiresIn)
+}
+
+function handleUpdateContent(content: string, editType: EditType): boolean {
+  return updateContent(content, editType) !== false
+}
+
+function handleRefreshDiary() {
+  if (diaryId.value) {
+    const diary = diaryStore.getDiaryById(diaryId.value)
+    if (diary) {
+      currentDiary.value = diary
+    }
+  }
+}
 </script>
 
 <template>
@@ -219,7 +253,7 @@ function formatTime(offset: number): string {
         ← 返回
       </button>
       
-      <div class="flex items-center gap-2" v-if="isOwner">
+      <div class="flex items-center gap-2 flex-wrap" v-if="isOwner">
         <button
           v-if="!isDead"
           class="btn-pixel text-diary-fresh border-diary-fresh text-sm"
@@ -264,10 +298,40 @@ function formatTime(offset: number): string {
           🎒 {{ isDead ? '🛠️ 维修' : '使用道具' }}
         </button>
         <button
+          class="btn-pixel text-purple-400 border-purple-400 text-sm"
+          @click="showInviteModal = true"
+        >
+          👥 {{ isCollaborative ? `管理协作 (${collaborators.length})` : '邀请协作' }}
+        </button>
+        <button
+          v-if="isCollaborative"
+          class="btn-pixel text-cyan-400 border-cyan-400 text-sm"
+          @click="showHistoryModal = true"
+        >
+          📜 协作记录 ({{ editHistory.length }})
+        </button>
+        <button
           class="btn-pixel text-red-500 border-red-500 text-sm"
           @click="showDeleteConfirm = true"
         >
           🗑️ 移入档案馆
+        </button>
+      </div>
+      
+      <div class="flex items-center gap-2 flex-wrap" v-else-if="isCollab">
+        <button
+          v-if="canEdit && !isDead"
+          class="btn-pixel text-green-400 border-green-400 text-sm"
+          @click="showEditorModal = true"
+        >
+          ✏️ 协作编辑
+        </button>
+        <button
+          v-if="isCollaborative"
+          class="btn-pixel text-cyan-400 border-cyan-400 text-sm"
+          @click="showHistoryModal = true"
+        >
+          📜 协作记录 ({{ editHistory.length }})
         </button>
       </div>
     </div>
@@ -367,6 +431,35 @@ function formatTime(offset: number): string {
             <div class="flex justify-between">
               <span class="text-gray-500 font-vt323">衰变等级:</span>
               <span class="font-vt323">{{ Math.floor(decayLevel * 100) }}%</span>
+            </div>
+          </div>
+          
+          <div v-if="isCollaborative" class="mt-4 pt-4 border-t border-gray-700">
+            <h4 class="font-vt323 text-purple-400 mb-3 text-sm">
+              👥 协作信息
+            </h4>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 font-vt323">协作者:</span>
+                <span class="font-vt323 text-purple-400">{{ collaborators.length }} 人</span>
+              </div>
+              <div class="flex flex-wrap gap-1 mt-2">
+                <span 
+                  v-for="collab in collaborators" 
+                  :key="collab.userId"
+                  class="px-2 py-1 rounded text-xs font-vt323 bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                >
+                  {{ collab.userName }}
+                </span>
+              </div>
+              <div v-if="lastEditAt" class="flex justify-between items-center mt-2">
+                <span class="text-gray-500 font-vt323">最后编辑:</span>
+                <span class="font-vt323 text-cyan-400">{{ Math.floor(lastEditAt) }}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 font-vt323">编辑次数:</span>
+                <span class="font-vt323 text-cyan-400">{{ editHistory.length }} 次</span>
+              </div>
             </div>
           </div>
           
@@ -671,5 +764,29 @@ function formatTime(offset: number): string {
         </div>
       </div>
     </div>
+    
+    <InviteCollaboratorModal
+      v-if="currentDiary"
+      :diary="currentDiary"
+      :visible="showInviteModal"
+      @close="showInviteModal = false"
+      @invited="handleRefreshDiary"
+    />
+    
+    <CollaborationHistory
+      v-if="currentDiary"
+      :diary="currentDiary"
+      :visible="showHistoryModal"
+      @close="showHistoryModal = false"
+    />
+    
+    <CollaborativeEditor
+      v-if="currentDiary"
+      :diary="currentDiary"
+      :can-edit="canEdit"
+      :visible="showEditorModal"
+      @close="showEditorModal = false"
+      @save="handleUpdateContent"
+    />
   </div>
 </template>

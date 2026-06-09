@@ -5,8 +5,8 @@ import { useInventoryStore } from '@/stores/inventory'
 import { renderPipeline } from '@/engine/RenderPipeline'
 import { globalTimeline } from '@/engine/Timeline'
 import { pluginLoader } from '@/engine/PluginLoader'
-import type { Diary, PipelineStep, DiarySchedule } from '@/types'
-import { STATE_NAMES, STATE_COLORS, DiaryState } from '@/types'
+import type { Diary, PipelineStep, DiarySchedule, EditType } from '@/types'
+import { STATE_NAMES, STATE_COLORS, DiaryState, EditType as ET } from '@/types'
 
 export function useDiary(diaryId?: string) {
   const diaryStore = useDiaryStore()
@@ -56,6 +56,41 @@ export function useDiary(diaryId?: string) {
   const scheduleStatus = computed(() => {
     if (!currentDiary.value) return null
     return diaryStore.getDiaryScheduleStatus(currentDiary.value)
+  })
+
+  const isCollaborative = computed(() => {
+    return currentDiary.value?.collaboration.isCollaborative || false
+  })
+
+  const collaborators = computed(() => {
+    return currentDiary.value?.collaboration.collaborators || []
+  })
+
+  const canEdit = computed(() => {
+    if (!currentDiary.value || !userStore.currentUserId) return false
+    return diaryStore.canEditDiary(currentDiary.value.id, userStore.currentUserId)
+  })
+
+  const isCollab = computed(() => {
+    if (!currentDiary.value || !userStore.currentUserId) return false
+    return diaryStore.isCollaborator(currentDiary.value.id, userStore.currentUserId)
+  })
+
+  const editHistory = computed(() => {
+    return currentDiary.value?.collaboration.editHistory || []
+  })
+
+  const lastEditAt = computed(() => {
+    return currentDiary.value?.collaboration.lastEditAt
+  })
+
+  const lastEditorId = computed(() => {
+    return currentDiary.value?.collaboration.lastEditorId
+  })
+
+  const pendingInvitationsForDiary = computed(() => {
+    if (!currentDiary.value) return []
+    return diaryStore.getCollaborationInvitationsByDiary(currentDiary.value.id)
   })
 
   function loadDiary(id: string) {
@@ -167,6 +202,30 @@ export function useDiary(diaryId?: string) {
     loadDiary(currentDiary.value.id)
   }
 
+  function inviteCollaborator(inviteeId: string, message: string = '', expiresIn: number = 1000) {
+    if (!currentDiary.value || !isOwner.value) return null
+    return diaryStore.inviteCollaborator(currentDiary.value.id, inviteeId, message, expiresIn)
+  }
+
+  function updateContent(newText: string, editType: EditType = ET.UPDATE) {
+    if (!currentDiary.value || !canEdit.value) return false
+    const success = diaryStore.updateCollaborativeContent(currentDiary.value.id, newText, editType)
+    if (success) {
+      loadDiary(currentDiary.value.id)
+    }
+    return success
+  }
+
+  function removeCollaborator(collaboratorId: string) {
+    if (!currentDiary.value || !isOwner.value) return false
+    return diaryStore.removeCollaborator(currentDiary.value.id, collaboratorId)
+  }
+
+  function cancelInvitation(invitationId: string) {
+    if (!currentDiary.value || !isOwner.value) return false
+    return diaryStore.cancelInvitation(invitationId)
+  }
+
   let unsubscribe: (() => void) | null = null
 
   onMounted(() => {
@@ -206,6 +265,14 @@ export function useDiary(diaryId?: string) {
     isFrozen,
     isScheduled,
     scheduleStatus,
+    isCollaborative,
+    collaborators,
+    canEdit,
+    isCollab,
+    editHistory,
+    lastEditAt,
+    lastEditorId,
+    pendingInvitationsForDiary,
     loadDiary,
     renderToCanvas,
     toggleFreeze,
@@ -218,6 +285,10 @@ export function useDiary(diaryId?: string) {
     removeMethodFromPipeline,
     useItem,
     checkTransition,
-    updateSchedule
+    updateSchedule,
+    inviteCollaborator,
+    updateContent,
+    removeCollaborator,
+    cancelInvitation
   }
 }

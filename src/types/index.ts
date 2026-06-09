@@ -133,6 +133,7 @@ export interface Diary {
   isPublic: boolean
   schedule: DiarySchedule
   decayStartTime: number | null
+  collaboration: DiaryCollaboration
 }
 
 export interface User {
@@ -235,4 +236,82 @@ export const TIME_PERIOD_NAMES: Record<TimePeriod, string> = {
   [TimePeriod.SEASON]: '季度典藏',
   [TimePeriod.YEAR]: '年度珍藏',
   [TimePeriod.ALL]: '全部时光'
+}
+
+export enum CollaborationStatus {
+  PENDING = 'pending',
+  ACCEPTED = 'accepted',
+  DECLINED = 'declined',
+  EXPIRED = 'expired'
+}
+
+export const COLLABORATION_STATUS_NAMES: Record<CollaborationStatus, string> = {
+  [CollaborationStatus.PENDING]: '等待接受',
+  [CollaborationStatus.ACCEPTED]: '已接受',
+  [CollaborationStatus.DECLINED]: '已拒绝',
+  [CollaborationStatus.EXPIRED]: '已过期'
+}
+
+export const COLLABORATION_STATUS_COLORS: Record<CollaborationStatus, string> = {
+  [CollaborationStatus.PENDING]: '#f59e0b',
+  [CollaborationStatus.ACCEPTED]: '#10b981',
+  [CollaborationStatus.DECLINED]: '#ef4444',
+  [CollaborationStatus.EXPIRED]: '#6b7280'
+}
+
+export enum EditType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  APPEND = 'append'
+}
+
+export const EDIT_TYPE_NAMES: Record<EditType, string> = {
+  [EditType.CREATE]: '创建',
+  [EditType.UPDATE]: '修改',
+  [EditType.APPEND]: '补充'
+}
+
+export interface Collaborator {
+  userId: string
+  userName: string
+  joinedAt: number
+  canEdit: boolean
+  editCount: number
+}
+
+export interface CollaborationInvitation {
+  id: string
+  diaryId: string
+  diaryTitle: string
+  inviterId: string
+  inviterName: string
+  inviteeId: string
+  inviteeName: string
+  status: CollaborationStatus
+  message: string
+  createdAt: number
+  expiresAt: number
+  respondedAt: number | null
+}
+
+export interface CollaborationEditRecord {
+  id: string
+  diaryId: string
+  editorId: string
+  editorName: string
+  editType: EditType
+  previousContent: string
+  newContent: string
+  timestamp: number
+  diffStart: number
+  diffLength: number
+}
+
+export interface DiaryCollaboration {
+  isCollaborative: boolean
+  collaborators: Collaborator[]
+  invitations: CollaborationInvitation[]
+  editHistory: CollaborationEditRecord[]
+  lastEditAt: number | null
+  lastEditorId: string | null
 }
