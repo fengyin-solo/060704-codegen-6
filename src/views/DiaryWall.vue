@@ -31,17 +31,35 @@ const wallOwner = computed(() => {
 })
 
 const diaries = computed(() => {
-  if (route.params.userId) {
+  const currentUserId = userStore.currentUserId
+  const targetUserId = route.params.userId as string | undefined
+  
+  if (targetUserId) {
     const now = globalTimeline.getTime()
-    return diaryStore.getDiariesByUser(route.params.userId as string)
+    return diaryStore.getDiariesByUser(targetUserId)
       .filter(d => {
+        if (d.ownerId === currentUserId) return true
+        if (d.collaboration.collaborators.some(c => c.userId === currentUserId)) return true
         if (!d.isPublic) return false
         if (d.state === 'scheduled') return false
         if (d.schedule.publishAt && d.schedule.publishAt > now) return false
         return true
       })
   }
-  return diaryStore.currentUserDiaries
+  
+  const ownedDiaries = diaryStore.currentUserDiaries
+  const collaborativeDiaries = diaryStore.collaborativeDiaries
+  const allDiaryIds = new Set(ownedDiaries.map(d => d.id))
+  const result = [...ownedDiaries]
+  
+  collaborativeDiaries.forEach(d => {
+    if (!allDiaryIds.has(d.id)) {
+      allDiaryIds.add(d.id)
+      result.push(d)
+    }
+  })
+  
+  return result.sort((a, b) => b.createdAt - a.createdAt)
 })
 
 const filteredDiaries = computed(() => {

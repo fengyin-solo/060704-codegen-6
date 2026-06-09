@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useDiaryStore } from '@/stores/diary'
+import CollaborationNotificationPanel from '@/components/diary/CollaborationNotificationPanel.vue'
 import type { User } from '@/types'
 
 interface Props {
@@ -18,6 +20,14 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const route = useRoute()
+const diaryStore = useDiaryStore()
+
+const showNotificationPanel = ref(false)
+
+const pendingInvitationCount = computed(() => {
+  if (!props.isLoggedIn || props.isVisiting) return 0
+  return diaryStore.pendingInvitations.length
+})
 
 const navItems = computed(() => {
   const items = [
@@ -97,6 +107,18 @@ function navigate(path: string) {
           </div>
           
           <div v-if="isLoggedIn && currentUser" class="flex items-center gap-3">
+            <button
+              class="relative p-2 rounded hover:bg-gray-800 transition-colors"
+              @click="showNotificationPanel = true"
+            >
+              <span class="text-xl">📨</span>
+              <span
+                v-if="pendingInvitationCount > 0"
+                class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-vt323 animate-pulse"
+              >
+                {{ pendingInvitationCount > 9 ? '9+' : pendingInvitationCount }}
+              </span>
+            </button>
             <span class="font-vt323 text-gray-300">
               {{ currentUser.name }}
             </span>
@@ -111,4 +133,9 @@ function navigate(path: string) {
       </div>
     </div>
   </nav>
+  
+  <CollaborationNotificationPanel
+    :visible="showNotificationPanel"
+    @close="showNotificationPanel = false"
+  />
 </template>

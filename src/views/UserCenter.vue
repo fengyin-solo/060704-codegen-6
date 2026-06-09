@@ -26,9 +26,19 @@ const userDiaries = computed(() => {
   return diaryStore.currentUserDiaries
 })
 
+const collaborativeDiaries = computed(() => {
+  return diaryStore.collaborativeDiaries
+})
+
+const pendingInvitations = computed(() => {
+  return diaryStore.pendingInvitations
+})
+
 const diaryStats = computed(() => {
   const stats: Record<string, number> = {
-    total: userDiaries.value.length
+    total: userDiaries.value.length,
+    collaborative: collaborativeDiaries.value.length,
+    pendingInvitations: pendingInvitations.value.length
   }
   
   Object.values(DiaryState).forEach(state => {
@@ -249,10 +259,24 @@ onMounted(() => {
         <div class="p-6 rounded-lg border-2 border-gray-700 bg-gray-800/50">
           <h3 class="font-vt323 text-xl text-diary-fresh mb-4">📊 数据统计</h3>
           
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <div class="text-center p-3 rounded bg-gray-700/30">
               <div class="font-vt323 text-3xl text-diary-fresh">{{ diaryStats.total }}</div>
               <div class="text-gray-400 font-vt323 text-sm">总日记数</div>
+            </div>
+            <div class="text-center p-3 rounded bg-gray-700/30">
+              <div class="font-vt323 text-3xl text-purple-400">{{ diaryStats.collaborative }}</div>
+              <div class="text-gray-400 font-vt323 text-sm">协作日记</div>
+            </div>
+            <div class="text-center p-3 rounded bg-gray-700/30 relative">
+              <div class="font-vt323 text-3xl text-orange-400">{{ diaryStats.pendingInvitations }}</div>
+              <div class="text-gray-400 font-vt323 text-sm">待处理邀请</div>
+              <span
+                v-if="diaryStats.pendingInvitations > 0"
+                class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-vt323 animate-pulse"
+              >
+                !
+              </span>
             </div>
             <div class="text-center p-3 rounded bg-gray-700/30">
               <div class="font-vt323 text-3xl" :style="{ color: STATE_COLORS[DiaryState.FRESH] }">
@@ -265,10 +289,6 @@ onMounted(() => {
                 {{ diaryStats[DiaryState.DEAD] }}
               </div>
               <div class="text-gray-400 font-vt323 text-sm">已逝世</div>
-            </div>
-            <div class="text-center p-3 rounded bg-gray-700/30">
-              <div class="font-vt323 text-3xl text-diary-fresh">{{ totalItems }}</div>
-              <div class="text-gray-400 font-vt323 text-sm">道具数量</div>
             </div>
           </div>
 

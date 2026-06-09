@@ -115,17 +115,39 @@ export const useDiaryStore = defineStore('diary', () => {
   function checkAndExpireInvitations() {
     const now = globalTimeline.getTime()
     let changed = false
+    const expiredInvitations: CollaborationInvitation[] = []
     
     collaborationInvitations.value = collaborationInvitations.value.map(inv => {
       if (inv.status === CS.PENDING && inv.expiresAt <= now) {
         changed = true
-        return { ...inv, status: CS.EXPIRED }
+        const expired = { ...inv, status: CS.EXPIRED }
+        expiredInvitations.push(expired)
+        return expired
       }
       return inv
     })
     
     if (changed) {
       storage.saveCollaborationInvitations(collaborationInvitations.value)
+      
+      expiredInvitations.forEach(expiredInv => {
+        const diary = getDiaryById(expiredInv.diaryId)
+        if (diary) {
+          const updatedDiaryInvitations = diary.collaboration.invitations.map(inv => 
+            inv.id === expiredInv.id ? expiredInv : inv
+          )
+          
+          const updatedDiary: Diary = {
+            ...diary,
+            collaboration: {
+              ...diary.collaboration,
+              invitations: updatedDiaryInvitations
+            }
+          }
+          
+          updateDiary(diary.id, updatedDiary)
+        }
+      })
     }
   }
 
@@ -782,6 +804,7 @@ export const useDiaryStore = defineStore('diary', () => {
     const now = globalTimeline.getTime()
     
     if (diary.ownerId === userId) return true
+    if (diary.collaboration.collaborators.some(c => c.userId === userId)) return true
     if (diary.state === DS.SCHEDULED) return false
     if (!diary.isPublic) return false
     if (diary.schedule.publishAt && diary.schedule.publishAt > now) return false
@@ -858,6 +881,15 @@ export const useDiaryStore = defineStore('diary', () => {
     collaborationInvitations.value.push(invitation)
     storage.saveCollaborationInvitations(collaborationInvitations.value)
     
+    const updatedDiary: Diary = {
+      ...diary,
+      collaboration: {
+        ...diary.collaboration,
+        invitations: [...diary.collaboration.invitations, invitation]
+      }
+    }
+    updateDiary(diaryId, updatedDiary)
+    
     return invitation
   }
 
@@ -890,12 +922,19 @@ export const useDiaryStore = defineStore('diary', () => {
       editCount: 0
     }
     
+    const updatedInvitation = collaborationInvitations.value[invitationIndex]
+    
+    const updatedDiaryInvitations = diary.collaboration.invitations.map(inv => 
+      inv.id === invitationId ? updatedInvitation : inv
+    )
+    
     const updatedDiary: Diary = {
       ...diary,
       collaboration: {
         ...diary.collaboration,
         isCollaborative: true,
-        collaborators: [...diary.collaboration.collaborators, newCollaborator]
+        collaborators: [...diary.collaboration.collaborators, newCollaborator],
+        invitations: updatedDiaryInvitations
       }
     }
     
@@ -915,11 +954,32 @@ export const useDiaryStore = defineStore('diary', () => {
     )
     if (invitationIndex === -1) return false
     
+    const invitation = collaborationInvitations.value[invitationIndex]
+    const diary = getDiaryById(invitation.diaryId)
+    
     const now = globalTimeline.getTime()
     collaborationInvitations.value[invitationIndex] = {
       ...collaborationInvitations.value[invitationIndex],
       status: CS.DECLINED,
       respondedAt: now
+    }
+    
+    const updatedInvitation = collaborationInvitations.value[invitationIndex]
+    
+    if (diary) {
+      const updatedDiaryInvitations = diary.collaboration.invitations.map(inv => 
+        inv.id === invitationId ? updatedInvitation : inv
+      )
+      
+      const updatedDiary: Diary = {
+        ...diary,
+        collaboration: {
+          ...diary.collaboration,
+          invitations: updatedDiaryInvitations
+        }
+      }
+      
+      updateDiary(diary.id, updatedDiary)
     }
     
     storage.saveCollaborationInvitations(collaborationInvitations.value)
@@ -936,7 +996,27 @@ export const useDiaryStore = defineStore('diary', () => {
     )
     if (invitationIndex === -1) return false
     
+    const invitation = collaborationInvitations.value[invitationIndex]
+    const diary = getDiaryById(invitation.diaryId)
+    
     collaborationInvitations.value.splice(invitationIndex, 1)
+    
+    if (diary) {
+      const updatedDiaryInvitations = diary.collaboration.invitations.filter(
+        inv => inv.id !== invitationId
+      )
+      
+      const updatedDiary: Diary = {
+        ...diary,
+        collaboration: {
+          ...diary.collaboration,
+          invitations: updatedDiaryInvitations
+        }
+      }
+      
+      updateDiary(diary.id, updatedDiary)
+    }
+    
     storage.saveCollaborationInvitations(collaborationInvitations.value)
     return true
   }
